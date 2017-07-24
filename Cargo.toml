@@ -1,0 +1,7 @@
+[package]
+name = "http-server"
+version = "0.1.0"
+authors = ["fiendfan1 <jaredloomis@users.noreply.github.com>"]
+
+[dependencies]
+nom = "^3.1"

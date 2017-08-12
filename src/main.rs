@@ -78,7 +78,7 @@ impl BlockchainNode<BlockData> {
         } else if req.path.starts_with("/connect") {
             req.params.get("peer")
                 .and_then(|peer| {
-                    self.add_peer(peer.clone());
+                    self.peers.push(peer.clone());
                     self.consensus();
                     serde_json::to_string(&self.peers).map(|peers_str| {
                         HttpResponse::new(
@@ -86,6 +86,16 @@ impl BlockchainNode<BlockData> {
                         )
                     }).ok()
                 })
+        } else if req.path.starts_with("/peers") {
+            serde_json::to_string(&self.peers).map(|peers_str| {
+                HttpResponse::new(
+                    String::from("200 OK"), Vec::new(), peers_str
+                )
+            }).ok()
+        } else if req.path.starts_with("/verify") {
+            Some(HttpResponse::new(
+                String::from("200 OK"), Vec::new(), self.verify().to_string()
+            ))
         } else {
             None
         }

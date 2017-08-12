@@ -45,6 +45,16 @@ impl<T> Block<T> where T: Serialize {
         }
     }
 
+    pub fn verify(&self) -> bool {
+        let data_str: String = match serde_json::to_string(&self.data) {
+                Ok(ret) => ret,
+                _       => String::new()
+        };
+        primitive_hash(
+            &self.index, &self.timestamp, &data_str, &self.previous_hash
+        ) == self.hash
+    }
+
     pub fn next_block(&self, data: T) -> Block<T> {
         Block::new(self.index+1, primitive_timestamp(), data, self.hash.clone())
     }

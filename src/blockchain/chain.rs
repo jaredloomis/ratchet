@@ -8,6 +8,9 @@ use reqwest;
 
 use blockchain::block::*;
 
+/**
+ * A node in the blockchain. Client and server
+ */
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockchainNode<T> {
     pub blockchain: Blockchain<T>,
@@ -15,14 +18,25 @@ pub struct BlockchainNode<T> {
     pub peers: Vec<String>
 }
 
+/**
+ * A Blockchain is a list of blocks
+ */
 pub type Blockchain<T> = Vec<Block<T>>;
 
+/**
+ * Data being stored in the ledger:
+ * - Proof of work (initial value)
+ * - Transactions  (moving around value)
+ */
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockData {
     proof_of_work: u64,
     transactions: Vec<Transaction>
 }
 
+/**
+ * An amount being exchanged between two nodes
+ */
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub from:   Hash,
@@ -30,15 +44,10 @@ pub struct Transaction {
     pub amount: u64
 }
 
-impl fmt::Display for Transaction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Transaction({}, {} -> {})",
-            self.amount, self.from, self.to
-        )
-    }
-}
-
 impl BlockchainNode<BlockData> {
+    /**
+     * Create a blockchain node with a single genesis block
+     */
     pub fn new() -> BlockchainNode<BlockData> {
         BlockchainNode {
             blockchain:   vec![BlockchainNode::genesis_block()],
@@ -47,10 +56,9 @@ impl BlockchainNode<BlockData> {
         }
     }
 
-    pub fn add_peer(&mut self, peer: String) {
-        self.peers.push(peer);
-    }
-
+    /**
+     * Get the balance associated with an address
+     */
     pub fn balance(&self, address: &Hash) -> u64 {
         // Starting from 0,
         // Loop through each block
@@ -79,6 +87,9 @@ impl BlockchainNode<BlockData> {
         })
     }
 
+    /**
+     * Mine a block
+     */
     pub fn mine(&mut self, miner_address: Hash) -> Option<&Block<BlockData>> {
         let last_m = self.blockchain.last().map(|last| {
             (last.index, last.hash.clone(), last.data.clone())
@@ -114,15 +125,25 @@ impl BlockchainNode<BlockData> {
         }
     }
 
+    /**
+     * Verify integrity of entire chain
+     */
+    pub fn verify(&self) -> bool {
+        self.blockchain.iter().all(|block| block.verify())
+    }
+
+    /**
+     * Check all other nodes for a more valid blockchain
+     */
     pub fn consensus(&mut self) {
+        // Ask neighbors for new peers
+        self.find_new_peers();
         // Get the blocks from other nodes
         let other_chains = self.find_new_chains();
-        println!("OTHER CHAINS: {}", other_chains.len());
         // If our chain isn't longest,
         // then we store the longest chain
         let bc = &self.blockchain.clone();
         let longest_chain = other_chains.iter().fold(bc, |best, cur| {
-            println!("Cur: {:?}", cur);
             if cur.len() > best.len() {
                 cur
             } else {
@@ -134,12 +155,22 @@ impl BlockchainNode<BlockData> {
         self.blockchain = longest_chain.clone();
     }
 
+    /**
+     * Add peers of current peers to tracked peers
+     */
+    fn find_new_peers(&mut self) {
+        for peer in self.peers_of_peers() {
+            self.peers.push(peer);
+        }
+    }
+
+    /**
+     * Collect all the other chains peers have
+     */
     fn find_new_chains(&self) -> Vec<Blockchain<BlockData>> {
-        // Get the blockchains of every
-        // other node
         let mut other_chains = Vec::new();
         for node_url in self.peers.clone() {
-            // Get their chains using a GET request
+            // Get the blockchains of peers using a GET request
             let mut block_res    = reqwest::get(format!("http://{}/blocks", node_url).as_str());
             if block_res.is_ok() {
                 let mut block_string = String::new();
@@ -152,6 +183,27 @@ impl BlockchainNode<BlockData> {
             }
         }
         other_chains
+    }
+
+    fn peers_of_peers(&self) -> Vec<String> {
+        self.peers.iter().filter_map(|peer| {
+            let peers_res = reqwest::get(format!("http://{}/peers", peer).as_str());
+            if peers_res.is_ok() {
+                let mut peers_string = String::new();
+                peers_res.unwrap().read_to_string(&mut peers_string);
+                // Parse
+                let peers = serde_json::from_str(peers_string.as_str());
+                // Add it to our list
+                if peers.is_ok() {
+                    Some(peers.unwrap())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect()
     }
 
     fn genesis_block() -> Block<BlockData> {

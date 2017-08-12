@@ -1,7 +1,14 @@
 [package]
-name = "http-server"
+name    = "http-server"
 version = "0.1.0"
-authors = ["fiendfan1 <jaredloomis@users.noreply.github.com>"]
+authors = ["Jared Loomis <jaredloomis@users.noreply.github.com>"]
 
 [dependencies]
-nom = "^3.1"
+nom          = "^3.1"
+regex        = "^0.2"
+rust-crypto  = "^0.2"
+chrono       = {version = "^0.4", features = ["serde"]}
+serde        = "^1.0.11"
+serde_derive = "^1.0.0"
+serde_json   = "^1.0"
+reqwest      = "^0.7.2"

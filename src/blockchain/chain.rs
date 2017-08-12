@@ -1,78 +1,21 @@
 use std::fmt;
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::collections::LinkedList;
 use std::io::Read;
 
-use chrono::{DateTime, Utc};
-use crypto::sha2::Sha512;
-use crypto::digest::Digest;
-
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use serde_json;
-use serde_json::{Value, Error};
 
 use reqwest;
 
-use http::parser::{HttpRequest, HttpResponse};
-
-pub mod chain;
-use self::chain::Blockchain;
-
-pub mod block;
-use self::block::Block;
-
-/*
-mod block;
-use self::block::{
-    Block, Instant, Hash, primitive_timestamp
-};
-mod chain;
-use self::chain::{BlockchainNode};
-*/
-
-//pub type Blockchain<T> = Vec<Block<T>>;
-
-pub fn blockchain() -> Blockchain<String> {
-    let size = 10;
-    let mut chain: Blockchain<String> = Vec::with_capacity(size);
-    chain.push(Block::genesis());
-    for i in 0..(size-1) {
-        let next_block_m = chain.last_mut().map(|tip| tip.next_block("some".into()));
-        // borrow of `chain` ended
-        match next_block_m {
-            Some(next_block) => chain.push(next_block),
-            None => {}
-        }
-    }
-    chain
-}
-/*
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct Transaction {
-    from:   Hash,
-    to:     Hash,
-    amount: u64
-}
-
-impl fmt::Display for Transaction {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Transaction({}, {}, {})",
-            self.from, self.to, self.amount
-        )
-    }
-}
-
-/*
- * Server
- */
+use blockchain::block::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BlockchainServer<T> {
-    blockchain: Blockchain<T>,
-    transactions: Vec<Transaction>,
-    peers: Vec<String>
+pub struct BlockchainNode<T> {
+    pub blockchain: Blockchain<T>,
+    pub transactions: Vec<Transaction>,
+    pub peers: Vec<String>
 }
+
+pub type Blockchain<T> = Vec<Block<T>>;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockData {
@@ -80,77 +23,27 @@ pub struct BlockData {
     transactions: Vec<Transaction>
 }
 
-impl BlockchainServer<BlockData> {
-    pub fn new() -> BlockchainServer<BlockData> {
-        BlockchainServer {
-            blockchain:   vec![BlockchainServer::genesis_block()],
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Transaction {
+    pub from:   Hash,
+    pub to:     Hash,
+    pub amount: u64
+}
+
+impl fmt::Display for Transaction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Transaction({}, {} -> {})",
+            self.amount, self.from, self.to
+        )
+    }
+}
+
+impl BlockchainNode<BlockData> {
+    pub fn new() -> BlockchainNode<BlockData> {
+        BlockchainNode {
+            blockchain:   vec![BlockchainNode::genesis_block()],
             transactions: Vec::new(),
             peers:        Vec::new()
-        }
-    }
-
-    pub fn handle_req(&mut self, req: HttpRequest) -> Option<HttpResponse> {
-        if req.path == "/transaction" && req.method == "POST" {
-            // On each new POST request,
-            // we extract the transaction data
-            // Then we add the transaction to our list
-            serde_json::from_str(req.body.as_str()).ok().map(move |trans| {
-                let res = HttpResponse::new(
-                    String::from("200 OK"), Vec::new(), req.body
-                );
-                self.transactions.push(trans);
-                res
-            })
-        } else if req.path.starts_with("/mine") && req.method == "GET" {
-            let address_m = req.params.get("address");
-            address_m.and_then(|address| self.mine(address.clone())).and_then(|block| {
-                match serde_json::to_string(&block) {
-                    Ok(block_json) =>
-                        Some(HttpResponse::new(
-                            String::from("200 OK"), Vec::new(), block_json
-                        )),
-                    _ => None
-                }
-            })
-        } else if req.path.starts_with("/consensus") {
-            // Achieve consensus
-            self.consensus();
-            // Send blockchain
-            match serde_json::to_string(&self.blockchain) {
-                Ok(blockchain_json) =>
-                    Some(HttpResponse::new(
-                        String::from("200 OK"), Vec::new(), blockchain_json
-                    )),
-                _ => None
-            }
-        } else if req.path.starts_with("/blocks") {
-            // Send blockchain
-            match serde_json::to_string(&self.blockchain) {
-                Ok(blockchain_json) =>
-                    Some(HttpResponse::new(
-                        String::from("200 OK"), Vec::new(), blockchain_json
-                    )),
-                _ => None
-            }
-        } else if req.path.starts_with("/balance") {
-            req.params.get("address")
-                .map(|address| self.balance(address))
-                .map(|balance| HttpResponse::new(
-                    String::from("200 OK"), Vec::new(), balance.to_string()
-                ))
-        } else if req.path.starts_with("/connect") {
-            req.params.get("peer")
-                .and_then(|peer| {
-                    self.add_peer(peer.clone());
-                    self.consensus();
-                    serde_json::to_string(&self.peers).map(|peers_str| {
-                        HttpResponse::new(
-                            String::from("200 OK"), Vec::new(), peers_str
-                        )
-                    }).ok()
-                })
-        } else {
-            None
         }
     }
 
@@ -211,7 +104,7 @@ impl BlockchainServer<BlockData> {
                 self.transactions.clear();
                 // Add block to blockchain
                 let mined_block = Block::new(
-                    last_index + 1, Utc::now(),
+                    last_index + 1, primitive_timestamp(),
                     new_block_data, last_hash.clone()
                 );
                 self.blockchain.push(mined_block);
@@ -251,7 +144,7 @@ impl BlockchainServer<BlockData> {
             if block_res.is_ok() {
                 let mut block_string = String::new();
                 block_res.unwrap().read_to_string(&mut block_string);
-                let block: Result<Blockchain<BlockData>, Error> = serde_json::from_str(block_string.as_str());
+                let block = serde_json::from_str(block_string.as_str());
                 // Add it to our list
                 if block.is_ok() {
                     other_chains.push(block.unwrap());
@@ -287,4 +180,3 @@ pub fn proof_of_work(last_proof: u64) -> u64 {
     incrementor
 }
 
-*/

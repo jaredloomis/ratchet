@@ -21,9 +21,76 @@ extern crate serde_json;
 extern crate reqwest;
 
 mod http;
+use http::parser::{HttpResponse, HttpRequest};
 mod blockchain;
+use blockchain::chain::{BlockchainNode, BlockData};
 
-use blockchain::{BlockchainServer, BlockData};
+impl BlockchainNode<BlockData> {
+    pub fn handle_req(&mut self, req: HttpRequest) -> Option<HttpResponse> {
+        if req.path == "/transaction" && req.method == "POST" {
+            // On each new POST request,
+            // we extract the transaction data
+            // Then we add the transaction to our list
+            serde_json::from_str(req.body.as_str()).ok().map(move |trans| {
+                let res = HttpResponse::new(
+                    String::from("200 OK"), Vec::new(), req.body
+                );
+                self.transactions.push(trans);
+                res
+            })
+        } else if req.path.starts_with("/mine") && req.method == "GET" {
+            let address_m = req.params.get("address");
+            address_m.and_then(|address| self.mine(address.clone())).and_then(|block| {
+                match serde_json::to_string(&block) {
+                    Ok(block_json) =>
+                        Some(HttpResponse::new(
+                            String::from("200 OK"), Vec::new(), block_json
+                        )),
+                    _ => None
+                }
+            })
+        } else if req.path.starts_with("/consensus") {
+            // Achieve consensus
+            self.consensus();
+            // Send blockchain
+            match serde_json::to_string(&self.blockchain) {
+                Ok(blockchain_json) =>
+                    Some(HttpResponse::new(
+                        String::from("200 OK"), Vec::new(), blockchain_json
+                    )),
+                _ => None
+            }
+        } else if req.path.starts_with("/blocks") {
+            // Send blockchain
+            match serde_json::to_string(&self.blockchain) {
+                Ok(blockchain_json) =>
+                    Some(HttpResponse::new(
+                        String::from("200 OK"), Vec::new(), blockchain_json
+                    )),
+                _ => None
+            }
+        } else if req.path.starts_with("/balance") {
+            req.params.get("address")
+                .map(|address| self.balance(address))
+                .map(|balance| HttpResponse::new(
+                    String::from("200 OK"), Vec::new(), balance.to_string()
+                ))
+        } else if req.path.starts_with("/connect") {
+            req.params.get("peer")
+                .and_then(|peer| {
+                    self.add_peer(peer.clone());
+                    self.consensus();
+                    serde_json::to_string(&self.peers).map(|peers_str| {
+                        HttpResponse::new(
+                            String::from("200 OK"), Vec::new(), peers_str
+                        )
+                    }).ok()
+                })
+        } else {
+            None
+        }
+    }
+}
 
 fn main() {
     // Get port from args
@@ -31,7 +98,7 @@ fn main() {
     let def_port     = String::from("4567");
     let port         = args.get(1).unwrap_or(&def_port);
 
-    let mut server: BlockchainServer<BlockData> = BlockchainServer::new();
+    let mut server: BlockchainNode<BlockData> = BlockchainNode::new();
     for i in 0..10 {
         server.mine(String::from("jaredloomis"));
     }

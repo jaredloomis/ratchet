@@ -1,6 +1,6 @@
 #! /bin/bash
 
 PORT=$1
-ACCOUNT=$2
+ADDRESS=$2
 
-echo $(curl "http://localhost:$PORT/balance?account=$ACCOUNT")
+echo $(curl "http://localhost:$PORT/balance?address=$ADDRESS")

@@ -16,11 +16,13 @@ use reqwest;
 
 use http::parser::{HttpRequest, HttpResponse};
 
-pub mod chain;
+pub mod transaction_chain;
 use self::chain::Blockchain;
 
 pub mod block;
 use self::block::Block;
+
+pub mod chain;
 
 /*
 mod block;

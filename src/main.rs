@@ -23,9 +23,10 @@ extern crate reqwest;
 mod http;
 use http::parser::{HttpResponse, HttpRequest};
 mod blockchain;
-use blockchain::chain::{BlockchainNode, BlockData};
+use blockchain::chain::{BlockchainNode};
+use blockchain::transaction_chain::{TransactionBlockData};
 
-impl BlockchainNode<BlockData> {
+impl BlockchainNode<TransactionBlockData> {
     pub fn handle_req(&mut self, req: HttpRequest) -> Option<HttpResponse> {
         if req.path == "/transaction" && req.method == "POST" {
             // On each new POST request,
@@ -78,7 +79,7 @@ impl BlockchainNode<BlockData> {
         } else if req.path.starts_with("/connect") {
             req.params.get("peer")
                 .and_then(|peer| {
-                    self.peers.push(peer.clone());
+                    self.peers.insert(peer.clone());
                     self.consensus();
                     serde_json::to_string(&self.peers).map(|peers_str| {
                         HttpResponse::new(
@@ -108,7 +109,8 @@ fn main() {
     let def_port     = String::from("4567");
     let port         = args.get(1).unwrap_or(&def_port);
 
-    let mut server: BlockchainNode<BlockData> = BlockchainNode::new();
+    let genesis = BlockchainNode::<TransactionBlockData>::genesis_block();
+    let mut server: BlockchainNode<TransactionBlockData> = BlockchainNode::new(genesis);
     for i in 0..10 {
         server.mine(String::from("jaredloomis"));
     }

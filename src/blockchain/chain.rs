@@ -1,7 +1,9 @@
-use std::fmt;
+use std;
 use std::io::Read;
+use std::collections::HashSet;
 
 use serde::{Serialize, Deserialize};
+use serde::de::DeserializeOwned;
 use serde_json;
 
 use reqwest;
@@ -9,29 +11,13 @@ use reqwest;
 use blockchain::block::*;
 
 /**
- * A node in the blockchain. Client and server
+ * A node on the blockchain. Client and server
  */
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BlockchainNode<T> {
     pub blockchain: Blockchain<T>,
     pub transactions: Vec<Transaction>,
-    pub peers: Vec<String>
-}
-
-/**
- * A Blockchain is a list of blocks
- */
-pub type Blockchain<T> = Vec<Block<T>>;
-
-/**
- * Data being stored in the ledger:
- * - Proof of work (initial value)
- * - Transactions  (moving around value)
- */
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct BlockData {
-    proof_of_work: u64,
-    transactions: Vec<Transaction>
+    pub peers: HashSet<String>
 }
 
 /**
@@ -44,15 +30,28 @@ pub struct Transaction {
     pub amount: u64
 }
 
-impl BlockchainNode<BlockData> {
+/**
+ * A Blockchain is a list of blocks
+ */
+pub type Blockchain<T> = Vec<Block<T>>;
+
+/**
+ * If the data inside blocks contains transactions,
+ * we can do a bunch of cool stuff generically
+ */
+pub trait HasTransactions {
+    fn transactions(&self) -> &Vec<Transaction>;
+}
+
+impl<T> BlockchainNode<T> where T: HasTransactions + Serialize + DeserializeOwned + Clone {
     /**
      * Create a blockchain node with a single genesis block
      */
-    pub fn new() -> BlockchainNode<BlockData> {
+    pub fn new(genesis_block: Block<T>) -> BlockchainNode<T> {
         BlockchainNode {
-            blockchain:   vec![BlockchainNode::genesis_block()],
+            blockchain:   vec![genesis_block],
             transactions: Vec::new(),
-            peers:        Vec::new()
+            peers:        HashSet::new()
         }
     }
 
@@ -64,7 +63,7 @@ impl BlockchainNode<BlockData> {
         // Loop through each block
         let tmp_tot = self.blockchain.iter().fold(0, |bal_i, block| {
             // And each transaction
-            block.data.transactions.iter().fold(bal_i, |bal, trans| {
+            block.data.transactions().iter().fold(bal_i, |bal, trans| {
                 // Add up each transaction
                 if trans.from == *address {
                     bal - trans.amount
@@ -88,44 +87,6 @@ impl BlockchainNode<BlockData> {
     }
 
     /**
-     * Mine a block
-     */
-    pub fn mine(&mut self, miner_address: Hash) -> Option<&Block<BlockData>> {
-        let last_m = self.blockchain.last().map(|last| {
-            (last.index, last.hash.clone(), last.data.clone())
-        });
-        match last_m {
-            Some((last_index, last_hash, last_data)) => {
-                let proof = proof_of_work(last_data.proof_of_work);
-                // Once we find a valid proof of work,
-                // we know we can mine a block so 
-                // we reward the miner by adding a transaction
-                self.transactions.push(Transaction {
-                    from: String::from("network"),
-                    to: miner_address,
-                    amount: 1
-                });
-                // Now we can gather the data needed
-                // to create the new block
-                let new_block_data = BlockData {
-                    proof_of_work: proof,
-                    transactions: self.transactions.clone()
-                };
-                // Empty transaction list
-                self.transactions.clear();
-                // Add block to blockchain
-                let mined_block = Block::new(
-                    last_index + 1, primitive_timestamp(),
-                    new_block_data, last_hash.clone()
-                );
-                self.blockchain.push(mined_block);
-                self.blockchain.last()
-            },
-            None => None
-        }
-    }
-
-    /**
      * Verify integrity of entire chain
      */
     pub fn verify(&self) -> bool {
@@ -138,10 +99,9 @@ impl BlockchainNode<BlockData> {
     pub fn consensus(&mut self) {
         // Ask neighbors for new peers
         self.find_new_peers();
-        // Get the blocks from other nodes
+        // Get the chains from other nodes
         let other_chains = self.find_new_chains();
-        // If our chain isn't longest,
-        // then we store the longest chain
+        // Find longest chain
         let bc = &self.blockchain.clone();
         let longest_chain = other_chains.iter().fold(bc, |best, cur| {
             if cur.len() > best.len() {
@@ -150,9 +110,30 @@ impl BlockchainNode<BlockData> {
                 best
             }
         });
-        // If the longest chain wasn't ours,
-        // then we set our chain to the longest
+        // If our chain isn't longest, store longest chain
         self.blockchain = longest_chain.clone();
+    }
+
+    /**
+     * Collect all the other chains peers have
+     */
+    fn find_new_chains(&self) -> Vec<Blockchain<T>> {
+        let mut other_chains = Vec::new();
+        for node_url in self.peers.clone() {
+            // Get the blockchains of peers using a GET request
+            let mut chain_res    = reqwest::get(format!("http://{}/blocks", node_url).as_str());
+            if chain_res.is_ok() {
+                // Parse response into a block
+                let mut chain_string = String::new();
+                chain_res.unwrap().read_to_string(&mut chain_string);
+                let chain = serde_json::from_str(chain_string.as_str());
+                // Add it to our list
+                if chain.is_ok() {
+                    other_chains.push(chain.unwrap());
+                }
+            }
+        }
+        other_chains
     }
 
     /**
@@ -160,31 +141,13 @@ impl BlockchainNode<BlockData> {
      */
     fn find_new_peers(&mut self) {
         for peer in self.peers_of_peers() {
-            self.peers.push(peer);
+            self.peers.insert(peer);
         }
     }
 
     /**
-     * Collect all the other chains peers have
+     * Ask all of my peers to send me their peers
      */
-    fn find_new_chains(&self) -> Vec<Blockchain<BlockData>> {
-        let mut other_chains = Vec::new();
-        for node_url in self.peers.clone() {
-            // Get the blockchains of peers using a GET request
-            let mut block_res    = reqwest::get(format!("http://{}/blocks", node_url).as_str());
-            if block_res.is_ok() {
-                let mut block_string = String::new();
-                block_res.unwrap().read_to_string(&mut block_string);
-                let block = serde_json::from_str(block_string.as_str());
-                // Add it to our list
-                if block.is_ok() {
-                    other_chains.push(block.unwrap());
-                }
-            }
-        }
-        other_chains
-    }
-
     fn peers_of_peers(&self) -> Vec<String> {
         self.peers.iter().filter_map(|peer| {
             let peers_res = reqwest::get(format!("http://{}/peers", peer).as_str());
@@ -206,29 +169,4 @@ impl BlockchainNode<BlockData> {
         .collect()
     }
 
-    fn genesis_block() -> Block<BlockData> {
-        let data = BlockData {
-            proof_of_work: 1,
-            transactions: Vec::new()
-        };
-        Block::new(0, primitive_timestamp(), data, String::from("0"))
-    }
 }
-
-pub fn proof_of_work(last_proof: u64) -> u64 {
-    // Create a variable that we will use to find
-    // our next proof of work
-    let mut incrementor = last_proof + 1;
-    // Keep incrementing the incrementor until
-    // it's equal to a number divisible by 9
-    // and the proof of work of the previous
-    // block in the chain
-    while !(incrementor % 9 == 0 && incrementor % last_proof == 0) {
-        incrementor += 1
-    }
-    // Once that number is found,
-    // we can return it as a proof
-    // of our work
-    incrementor
-}
-

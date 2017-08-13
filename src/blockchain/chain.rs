@@ -35,6 +35,19 @@ pub struct Transaction {
  */
 pub type Blockchain<T> = Vec<Block<T>>;
 
+pub fn verify_chain<T: Serialize + Clone>(chain: &Blockchain<T>) -> bool {
+    // Go through each block
+    let hash_0 = &chain.get(0).unwrap().hash;
+    let (ret, _) = chain.iter().skip(1).fold((true, hash_0), |(acc, prev_hash), block| {
+        // And make sure that:
+        // 1. block.previous_hash is equal to previous block's .hash
+        // 2. block.hash is correct (the SHA3 of the rest of the block)
+        let ok = acc && block.previous_hash == *prev_hash && block.verify_hash();
+        (ok, &block.hash)
+    });
+    ret
+}
+
 /**
  * If the data inside blocks contains transactions,
  * we can do a bunch of cool stuff generically
@@ -53,6 +66,13 @@ impl<T> BlockchainNode<T> where T: HasTransactions + Serialize + DeserializeOwne
             transactions: Vec::new(),
             peers:        HashSet::new()
         }
+    }
+
+    /**
+     * Stage a transaction to be recorded
+     */
+    pub fn transaction(&mut self, transaction: Transaction) {
+        self.transactions.push(transaction);
     }
 
     /**
@@ -90,7 +110,7 @@ impl<T> BlockchainNode<T> where T: HasTransactions + Serialize + DeserializeOwne
      * Verify integrity of entire chain
      */
     pub fn verify(&self) -> bool {
-        self.blockchain.iter().all(|block| block.verify())
+        verify_chain(&self.blockchain)
     }
 
     /**
@@ -103,13 +123,16 @@ impl<T> BlockchainNode<T> where T: HasTransactions + Serialize + DeserializeOwne
         let other_chains = self.find_new_chains();
         // Find longest chain
         let bc = &self.blockchain.clone();
-        let longest_chain = other_chains.iter().fold(bc, |best, cur| {
-            if cur.len() > best.len() {
-                cur
-            } else {
-                best
-            }
-        });
+        let longest_chain = other_chains.iter()
+            // Ignore any invalid chains
+            .filter(|chain| verify_chain(chain))
+            .fold(bc, |best, cur| {
+                if cur.len() > best.len() {
+                    cur
+                } else {
+                    best
+                }
+            });
         // If our chain isn't longest, store longest chain
         self.blockchain = longest_chain.clone();
     }
@@ -149,24 +172,22 @@ impl<T> BlockchainNode<T> where T: HasTransactions + Serialize + DeserializeOwne
      * Ask all of my peers to send me their peers
      */
     fn peers_of_peers(&self) -> Vec<String> {
-        self.peers.iter().filter_map(|peer| {
-            let peers_res = reqwest::get(format!("http://{}/peers", peer).as_str());
-            if peers_res.is_ok() {
-                let mut peers_string = String::new();
-                peers_res.unwrap().read_to_string(&mut peers_string);
-                // Parse
-                let peers = serde_json::from_str(peers_string.as_str());
-                // Add it to our list
-                if peers.is_ok() {
-                    Some(peers.unwrap())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+        // For each peer
+        self.peers.iter().flat_map(|peer| {
+            // Ask for their peers
+            reqwest::get(format!("http://{}/peers", peer).as_str()).ok()
+                // Read to string
+                .map(|mut peers_res| {
+                    let mut peers_string = String::new();
+                    peers_res.read_to_string(&mut peers_string);
+                    peers_string
+                })
+                // Parse to object
+                .and_then(|peers_string|
+                    serde_json::from_str::<Vec<String>>(peers_string.as_str()).ok()
+                )
+                .unwrap_or(Vec::new())
         })
         .collect()
     }
-
 }

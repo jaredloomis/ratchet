@@ -17,9 +17,6 @@ pub struct Block<T> {
     pub previous_hash: Hash
 }
 
-pub type Instant = DateTime<Utc>;
-pub type Hash = String;
-
 impl Block<String> {
     pub fn genesis() -> Block<String> {
         Block::new(0, primitive_timestamp(), String::from("Genesis Block"), String::from("0"))
@@ -45,7 +42,7 @@ impl<T> Block<T> where T: Serialize {
         }
     }
 
-    pub fn verify(&self) -> bool {
+    pub fn verify_hash(&self) -> bool {
         let data_str: String = match serde_json::to_string(&self.data) {
                 Ok(ret) => ret,
                 _       => String::new()
@@ -63,11 +60,14 @@ impl<T> Block<T> where T: Serialize {
 impl<T> fmt::Display for Block<T> where T: fmt::Display {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
-            f, "Block({}, {}, {}, {}, {})",
+            f, "Block #{} at {} [{}] ({}, {})",
             self.index, self.timestamp, self.data, self.hash, self.previous_hash
         )
     }
 }
+
+pub type Instant = DateTime<Utc>;
+pub type Hash = String;
 
 pub fn primitive_timestamp() -> Instant {
     Utc::now()

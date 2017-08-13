@@ -23,7 +23,7 @@ extern crate reqwest;
 mod http;
 use http::parser::{HttpResponse, HttpRequest};
 mod blockchain;
-use blockchain::chain::{BlockchainNode};
+use blockchain::chain::{BlockchainNode, Transaction};
 use blockchain::transaction_chain::{TransactionBlockData};
 
 impl BlockchainNode<TransactionBlockData> {
@@ -32,14 +32,18 @@ impl BlockchainNode<TransactionBlockData> {
             // On each new POST request,
             // we extract the transaction data
             // Then we add the transaction to our list
-            serde_json::from_str(req.body.as_str()).ok().map(move |trans| {
-                let res = HttpResponse::new(
-                    String::from("200 OK"), Vec::new(), req.body
-                );
-                self.transactions.push(trans);
-                res
+            serde_json::from_str(req.body.as_str()).ok().and_then(move |trans: Transaction| {
+                if self.balance(&trans.from) >= trans.amount {
+                    let res = HttpResponse::new(
+                        String::from("200 OK"), Vec::new(), req.body
+                    );
+                    self.transactions.push(trans);
+                    Some(res)
+                } else {
+                    None
+                }
             })
-        } else if req.path.starts_with("/mine") && req.method == "GET" {
+        } else if req.path.starts_with("/mine") {
             let address_m = req.params.get("address");
             address_m.and_then(|address| self.mine(address.clone())).and_then(|block| {
                 match serde_json::to_string(&block) {

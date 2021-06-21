@@ -1,6 +1,6 @@
-# Ratch
+# Ratchet
 
-Ratch is:
+Ratchet is:
 - A generic blockchain library, which can be used to create any blockchain
   technology
 - A bare-bones HTTP server
